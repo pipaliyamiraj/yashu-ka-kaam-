@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Indian GST, Discount & Restaurant Billing Generator | React + Tailwind CSS</title>
+  <meta name="description" content="React Indian Currency (₹ INR) Calculator & Restaurant Food Invoice Generator with Tailwind CSS">
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: ['selector', '[data-theme="dark"]'],
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              DEFAULT: '#4f46e5',
+              hover: '#4338ca',
+              light: 'rgba(99, 102, 241, 0.15)',
+              glow: 'rgba(99, 102, 241, 0.35)'
+            }
+          },
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+
+  <link rel="stylesheet" href="./style.css">
+
+  <!-- React 18 & Babel Standalone CDNs -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
+
+    // Helper functions
+    function formatINR(val) {
+      if (isNaN(val) || val === null || val === undefined) return '₹0.00';
+      return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(val);
+    }
+
+    function inrToWords(amount) {
+      const rounded = Math.round(Number(amount) || 0);
+      if (rounded === 0) return 'Zero Rupees Only';
+      if (rounded < 0) return 'Negative Amount';
+
+      const singleDigits = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+      const twoDigits = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+      const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+      function convertTwoDigit(num) {
+        if (num === 0) return '';
+        if (num < 10) return singleDigits[num];
+        if (num < 20) return twoDigits[num - 10];
+        const rem = num % 10;
+        return tens[Math.floor(num / 10)] + (rem ? ' ' + singleDigits[rem] : '');
+      }
+
+      function convertThreeDigit(num) {
+        const hundred = Math.floor(num / 100);
+        const rest = num % 100;
+        let str = '';
+        if (hundred) str += singleDigits[hundred] + ' Hundred';
+        if (hundred && rest) str += ' and ';
+        if (rest) str += convertTwoDigit(rest);
+        return str;
+      }
+
+      let crore = Math.floor(rounded / 10000000);
+      let remainder = rounded % 10000000;
+      let lakh = Math.floor(remainder / 100000);
+      remainder = remainder % 100000;
+      let thousand = Math.floor(remainder / 1000);
+      remainder = remainder % 1000;
+
+      let words = '';
+      if (crore > 0) words += convertTwoDigit(crore) + ' Crore ';
+      if (lakh > 0) words += convertTwoDigit(lakh) + ' Lakh ';
+      if (thousand > 0) words += convertTwoDigit(thousand) + ' Thousand ';
+      if (remainder > 0) words += convertThreeDigit(remainder) + ' ';
+
+      return words.trim() + ' Rupees Only';
+    }
+
+    function getGstDescription(rate) {
+      switch (Number(rate)) {
+        case 0: return 'Nil / Exempt';
+        case 5: return 'Essential';
+        case 12: return 'Standard Low';
+        case 18: return 'Standard';
+        case 28: return 'Luxury';
+        default: return 'Custom GST';
+      }
+    }
+
+    function calculateGeneralGST(state) {
+      const base = Math.max(0, parseFloat(state.baseAmount) || 0);
+      const qty = Math.max(1, parseInt(state.quantity, 10) || 1);
+      const grossSubtotal = base * qty;
+
+      let discountAmount = 0;
+      let discountLabel = '';
+
+      if (state.discountType === 'percent') {
+        const pct = Math.min(100, Math.max(0, parseFloat(state.discountValue) || 0));
+        discountAmount = (grossSubtotal * pct) / 100;
+        discountLabel = `${pct}%`;
+      } else {
+        discountAmount = Math.min(grossSubtotal, Math.max(0, parseFloat(state.discountValue) || 0));
+        discountLabel = formatINR(discountAmount);
+      }
+
+      const netAfterDiscount = Math.max(0, grossSubtotal - discountAmount);
+
+      let taxableValue = 0;
+      let totalGstAmount = 0;
+      let grandTotal = 0;
+      const gstRate = Math.max(0, parseFloat(state.gstRate) || 0);
+
+      if (state.taxMode === 'exclusive') {
+        taxableValue = netAfterDiscount;
+        totalGstAmount = (taxableValue * gstRate) / 100;
+        grandTotal = taxableValue + totalGstAmount;
+      } else {
+        if (gstRate > 0) {
+          taxableValue = netAfterDiscount / (1 + gstRate / 100);
+          totalGstAmount = netAfterDiscount - taxableValue;
+        } else {
+          taxableValue = netAfterDiscount;
+          totalGstAmount = 0;
+        }
+        grandTotal = netAfterDiscount;
+      }
+
+      const halfRate = gstRate / 2;
+      const halfTax = totalGstAmount / 2;
+      const effectiveTotal = taxableValue + totalGstAmount;
+      const basePct = effectiveTotal > 0 ? Math.round((taxableValue / effectiveTotal) * 100) : 0;
+      const gstPct = effectiveTotal > 0 ? 100 - basePct : 0;
+      const savingPct = grossSubtotal > 0 ? Math.round((discountAmount / grossSubtotal) * 100) : 0;
+
+      return {
+        grossSubtotal,
+        discountAmount,
+        discountLabel,
+        taxableValue,
+        totalGstAmount,
+        grandTotal,
+        gstRate,
+        halfRate,
+        halfTax,
+        qty,
+        basePct,
+        gstPct,
+        savingPct
+      };
+    }
+
+    function calculateRestaurantBill(rest) {
+      let foodSubtotal = 0;
+      let totalItemUnits = 0;
+
+      (rest.items || []).forEach(item => {
+        const qty = Math.max(1, parseInt(item.qty, 10) || 1);
+        const price = Math.max(0, parseFloat(item.price) || 0);
+        foodSubtotal += (qty * price);
+        totalItemUnits += qty;
+      });
+
+      let discountAmount = 0;
+      let discountLabel = '';
+
+      if (rest.discountType === 'percent') {
+        const pct = Math.min(100, Math.max(0, parseFloat(rest.discountVal) || 0));
+        discountAmount = (foodSubtotal * pct) / 100;
+        discountLabel = `${pct}%`;
+      } else {
+        discountAmount = Math.min(foodSubtotal, Math.max(0, parseFloat(rest.discountVal) || 0));
+        discountLabel = formatINR(discountAmount);
+      }
+
+      const afterDiscount = Math.max(0, foodSubtotal - discountAmount);
+
+      let serviceChargeAmount = 0;
+      let serviceChargeLabel = '';
+
+      if (rest.serviceChargeType === 'percent') {
+        const scPct = Math.max(0, parseFloat(rest.serviceChargeVal) || 0);
+        serviceChargeAmount = (afterDiscount * scPct) / 100;
+        serviceChargeLabel = `${scPct}%`;
+      } else {
+        serviceChargeAmount = Math.max(0, parseFloat(rest.serviceChargeVal) || 0);
+        serviceChargeLabel = formatINR(serviceChargeAmount);
+      }
+
+      const packagingAmount = Math.max(0, parseFloat(rest.packagingCharge) || 0);
+      const tipAmount = Math.max(0, parseFloat(rest.tip) || 0);
+      const taxableValue = afterDiscount + serviceChargeAmount + packagingAmount;
+
+      const gstRate = Math.max(0, parseFloat(rest.gstRate) || 0);
+      const halfGstRate = gstRate / 2;
+      const totalGst = (taxableValue * gstRate) / 100;
+      const cgstAmount = totalGst / 2;
+      const sgstAmount = totalGst / 2;
+      const grandTotal = Math.round(taxableValue + totalGst + tipAmount);
+
+      return {
+        foodSubtotal,
+        totalItemUnits,
+        discountAmount,
+        discountLabel,
+        serviceChargeAmount,
+        serviceChargeLabel,
+        packagingAmount,
+        taxableValue,
+        gstRate,
+        halfGstRate,
+        cgstAmount,
+        sgstAmount,
+        totalGst,
+        tipAmount,
+        grandTotal
+      };
+    }
+
+    function Header({ theme, onToggleTheme, onResetAll }) {
+      return (
+        <header className="app-header">
+          <div className="brand">
+            <div className="logo-icon">
+              <i className="fa-solid fa-indian-rupee-sign"></i>
+            </div>
+            <div>
+              <h1>Smart GST, Discount & Restaurant Billing</h1>
+              <p className="subtitle">Indian Rupee (₹ INR) Tax Estimator & Food Invoice POS • React + Tailwind CSS</p>
+            </div>
+          </div>
+          <div className="header-actions">
+            <button type="button" onClick={onToggleTheme} className="btn-icon" title="Toggle Dark/Light Mode">
+              <i className={theme === 'light' ? 'fa-solid fa-sun' : 'fa-solid fa-moon'}></i>
+            </button>
+            <button type="button" onClick={onResetAll} className="btn-outline-sm" title="Clear and reset form">
+              <i className="fa-solid fa-arrows-rotate"></i> Reset
+            </button>
+          </div>
+        </header>
+      );
+    }
+
+    function GstCalculator({
+      generalState,
+      setGeneralState,
+      calculation,
+      history,
+      onSaveHistory,
+      onLoadHistory,
+      onClearHistory,
+      onCopySummary,
+      onPrint
+    }) {
+      const { baseAmount, quantity, discountType, discountValue, gstRate, isCustomGst, taxMode, supplyType } = generalState;
+      const { grossSubtotal, discountAmount, discountLabel, taxableValue, totalGstAmount, grandTotal, halfRate, halfTax, basePct, gstPct, savingPct } = calculation;
+
+      return (
+        <div className="tab-pane active">
+          <main className="calculator-grid">
+            <section className="card input-card">
+              <h2 className="card-title"><i className="fa-solid fa-sliders"></i> Enter Values</h2>
+
+              <div className="form-group">
+                <label htmlFor="baseAmount">
+                  <span>Base Amount (INR)</span>
+                  <span className="currency-tag">₹ INR</span>
+                </label>
+                <div className="input-with-symbol">
+                  <span className="currency-symbol">₹</span>
+                  <input
+                    type="number"
+                    id="baseAmount"
+                    placeholder="0.00"
+                    min="0"
+                    step="any"
+                    value={baseAmount === 0 ? '' : baseAmount}
+                    onChange={(e) => setGeneralState(prev => ({ ...prev, baseAmount: Math.max(0, parseFloat(e.target.value) || 0) }))}
+                  />
+                </div>
+                <div className="quick-chips">
+                  <span className="quick-label">Quick Add:</span>
+                  {[500, 1000, 5000, 10000, 50000].map(val => (
+                    <button key={val} type="button" className="chip-btn" onClick={() => setGeneralState(prev => ({ ...prev, baseAmount: (prev.baseAmount || 0) + val }))}>
+                      +₹{val.toLocaleString('en-IN')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group-inline">
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Quantity / Units</label>
+                  <div className="input-stepper">
+                    <button type="button" className="stepper-btn" onClick={() => setGeneralState(prev => ({ ...prev, quantity: Math.max(1, prev.quantity - 1) }))}>
+                      <i className="fa-solid fa-minus"></i>
+                    </button>
+                    <input
+                      type="number"
+                      value={quantity}
+                      min="1"
+                      onChange={(e) => setGeneralState(prev => ({ ...prev, quantity: Math.max(1, parseInt(e.target.value, 10) || 1) }))}
+                    />
+                    <button type="button" className="stepper-btn" onClick={() => setGeneralState(prev => ({ ...prev, quantity: prev.quantity + 1 }))}>
+                      <i className="fa-solid fa-plus"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ flex: 1.2 }}>
+                  <label>GST Treatment</label>
+                  <div className="toggle-switch-group">
+                    <button
+                      type="button"
+                      className={`tax-mode-btn ${taxMode === 'exclusive' ? 'active' : ''}`}
+                      onClick={() => setGeneralState(prev => ({ ...prev, taxMode: 'exclusive' }))}
+                    >
+                      <i className="fa-solid fa-plus"></i> Add GST
+                    </button>
+                    <button
+                      type="button"
+                      className={`tax-mode-btn ${taxMode === 'inclusive' ? 'active' : ''}`}
+                      onClick={() => setGeneralState(prev => ({ ...prev, taxMode: 'inclusive' }))}
+                    >
+                      <i className="fa-solid fa-filter"></i> Incl. GST
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <label className="section-label"><i className="fa-solid fa-tags"></i> Discount Option</label>
+                  <div className="segmented-control">
+                    <button
+                      type="button"
+                      className={`segment-btn ${discountType === 'percent' ? 'active' : ''}`}
+                      onClick={() => setGeneralState(prev => ({ ...prev, discountType: 'percent', discountValue: prev.discountValue > 100 ? 10 : prev.discountValue }))}
+                    >
+                      <i className="fa-solid fa-percent"></i> Percentage (%)
+                    </button>
+                    <button
+                      type="button"
+                      className={`segment-btn ${discountType === 'amount' ? 'active' : ''}`}
+                      onClick={() => setGeneralState(prev => ({ ...prev, discountType: 'amount' }))}
+                    >
+                      <i className="fa-solid fa-indian-rupee-sign"></i> Flat Amount (₹)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="input-with-symbol">
+                  <span className="currency-symbol">{discountType === 'percent' ? '%' : '₹'}</span>
+                  <input
+                    type="number"
+                    value={discountValue === 0 ? '' : discountValue}
+                    onChange={(e) => setGeneralState(prev => ({ ...prev, discountValue: Math.max(0, parseFloat(e.target.value) || 0) }))}
+                  />
+                </div>
+
+                <div className="quick-chips">
+                  <span className="quick-label">Presets:</span>
+                  {discountType === 'percent'
+                    ? [0, 5, 10, 15, 20, 25, 50].map(val => (
+                        <button key={val} type="button" className={`discount-chip ${discountValue === val ? 'active' : ''}`} onClick={() => setGeneralState(prev => ({ ...prev, discountValue: val }))}>
+                          {val}%
+                        </button>
+                      ))
+                    : [100, 250, 500, 1000, 2000].map(val => (
+                        <button key={val} type="button" className={`discount-flat-chip ${discountValue === val ? 'active' : ''}`} onClick={() => setGeneralState(prev => ({ ...prev, discountValue: val }))}>
+                          ₹{val.toLocaleString('en-IN')}
+                        </button>
+                      ))}
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <label className="section-label"><i className="fa-solid fa-landmark"></i> GST Rate Slab</label>
+                  <span className="sub-pill">{isCustomGst ? `${gstRate}% Custom GST` : `${gstRate}% ${getGstDescription(gstRate)}`}</span>
+                </div>
+
+                <div className="gst-slabs-grid">
+                  {[
+                    { rate: 0, desc: 'Nil / Exempt' },
+                    { rate: 5, desc: 'Essential' },
+                    { rate: 12, desc: 'Standard (Low)' },
+                    { rate: 18, desc: 'Standard' },
+                    { rate: 28, desc: 'Luxury / Sin' }
+                  ].map(slab => (
+                    <button
+                      key={slab.rate}
+                      type="button"
+                      className={`gst-slab-btn ${!isCustomGst && gstRate === slab.rate ? 'active' : ''}`}
+                      onClick={() => setGeneralState(prev => ({ ...prev, gstRate: slab.rate, isCustomGst: false }))}
+                    >
+                      <span className="rate">{slab.rate}%</span>
+                      <span className="desc">{slab.desc}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="custom-gst-row">
+                  <label htmlFor="customGst">Or Custom GST %:</label>
+                  <div className="input-with-symbol small-input">
+                    <span className="currency-symbol">%</span>
+                    <input
+                      type="number"
+                      id="customGst"
+                      placeholder="Custom %"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={isCustomGst ? gstRate : ''}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        if (!isNaN(v) && v >= 0) {
+                          setGeneralState(prev => ({ ...prev, gstRate: v, isCustomGst: true }));
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="tax-type-selection">
+                  <span className="tax-type-label">Supply Type:</span>
+                  <div className="radio-pill-group">
+                    <label className="radio-pill">
+                      <input type="radio" name="gstSupplyType" value="intra" checked={supplyType === 'intra'} onChange={() => setGeneralState(prev => ({ ...prev, supplyType: 'intra' }))} />
+                      <span>Intra-State (CGST + SGST)</span>
+                    </label>
+                    <label className="radio-pill">
+                      <input type="radio" name="gstSupplyType" value="inter" checked={supplyType === 'inter'} onChange={() => setGeneralState(prev => ({ ...prev, supplyType: 'inter' }))} />
+                      <span>Inter-State (IGST)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="card result-card">
+              <div className="result-header">
+                <h2 className="card-title"><i className="fa-solid fa-receipt"></i> Calculation Summary</h2>
+                <span className="status-live"><span className="pulse-dot"></span> Live</span>
+              </div>
+
+              <div className="grand-total-hero">
+                <div className="total-caption">Final Net Payable Amount</div>
+                <div className="total-amount-display">{formatINR(grandTotal)}</div>
+                <div className="total-in-words">{inrToWords(grandTotal)}</div>
+              </div>
+
+              <div className="distribution-container">
+                <div className="bar-labels">
+                  <span>Base: <b>{basePct}%</b></span>
+                  <span>Tax: <b>{gstPct}%</b></span>
+                  <span>Saved: <b>{savingPct}%</b></span>
+                </div>
+                <div className="distribution-bar">
+                  <div className="bar-segment bar-base" style={{ width: `${basePct}%` }}></div>
+                  <div className="bar-segment bar-gst" style={{ width: `${gstPct}%` }}></div>
+                </div>
+              </div>
+
+              <div className="breakdown-table">
+                <div className="breakdown-row">
+                  <span className="row-label"><i className="fa-solid fa-box"></i> Gross Subtotal ({quantity} unit{quantity > 1 ? 's' : ''})</span>
+                  <span className="row-value">{formatINR(grossSubtotal)}</span>
+                </div>
+                <div className="breakdown-row discount-row">
+                  <span className="row-label"><i className="fa-solid fa-tag"></i> Discount ({discountLabel}) {discountAmount > 0 && <span className="badge-saving">You Save</span>}</span>
+                  <span className="row-value discount-val">- {formatINR(discountAmount)}</span>
+                </div>
+                <div className="breakdown-row subtotal-row">
+                  <span className="row-label"><strong>Net Taxable Value</strong></span>
+                  <span className="row-value"><strong>{formatINR(taxableValue)}</strong></span>
+                </div>
+                {gstRate === 0 || totalGstAmount === 0 ? (
+                  <div className="breakdown-row tax-row">
+                    <span className="row-label">GST (0% Exempt)</span>
+                    <span className="row-value">₹0.00</span>
+                  </div>
+                ) : supplyType === 'intra' ? (
+                  <>
+                    <div className="breakdown-row tax-row">
+                      <span className="row-label">↳ CGST ({halfRate}%)</span>
+                      <span className="row-value">{formatINR(halfTax)}</span>
+                    </div>
+                    <div className="breakdown-row tax-row">
+                      <span className="row-label">↳ SGST / UTGST ({halfRate}%)</span>
+                      <span className="row-value">{formatINR(halfTax)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="breakdown-row tax-row">
+                    <span className="row-label">↳ IGST Integrated ({gstRate}%)</span>
+                    <span className="row-value">{formatINR(totalGstAmount)}</span>
+                  </div>
+                )}
+                <div className="breakdown-row total-tax-row">
+                  <span className="row-label"><i className="fa-solid fa-file-invoice-dollar"></i> Total GST Tax Amount</span>
+                  <span className="row-value tax-val">+ {formatINR(totalGstAmount)}</span>
+                </div>
+                <div className="breakdown-divider"></div>
+                <div className="breakdown-row grand-row">
+                  <span className="row-label">Grand Total</span>
+                  <span className="row-value">{formatINR(grandTotal)}</span>
+                </div>
+              </div>
+
+              <div className="action-buttons-group">
+                <button type="button" className="btn-action btn-primary" onClick={onCopySummary}>
+                  <i className="fa-solid fa-copy"></i> Copy Bill Summary
+                </button>
+                <button type="button" className="btn-action btn-secondary" onClick={onSaveHistory}>
+                  <i className="fa-solid fa-bookmark"></i> Save Calculation
+                </button>
+                <button type="button" className="btn-action btn-outline" onClick={onPrint}>
+                  <i className="fa-solid fa-print"></i> Print Receipt
+                </button>
+              </div>
+            </section>
+          </main>
+
+          <section className="card history-card">
+            <div className="history-header">
+              <div className="history-title">
+                <i className="fa-solid fa-clock-rotate-left"></i>
+                <h3>Saved & Recent Calculations</h3>
+                <span className="badge-count">{history.length}</span>
+              </div>
+              {history.length > 0 && (
+                <button type="button" className="btn-link-danger" onClick={onClearHistory}>
+                  <i className="fa-solid fa-trash-can"></i> Clear History
+                </button>
+              )}
+            </div>
+
+            <div className="history-list">
+              {history.length === 0 ? (
+                <p className="empty-history-text">No saved calculations yet. Click <b>"Save Calculation"</b> above to save records.</p>
+              ) : (
+                history.map(item => (
+                  <div key={item.id} className="history-item" onClick={() => onLoadHistory(item)}>
+                    <div className="history-item-top">
+                      <span className="history-time"><i className="fa-regular fa-clock"></i> {item.date}</span>
+                      <span className="history-total">{formatINR(item.grandTotal)}</span>
+                    </div>
+                    <div className="history-tags">
+                      <span className="history-tag">Base: ₹{item.baseAmount.toLocaleString('en-IN')}</span>
+                      <span className="history-tag">Disc: {item.discount}</span>
+                      <span className="history-tag">GST: {item.gstRate}%</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    function RestaurantBilling({
+      restState,
+      setRestState,
+      calculation,
+      onPrint,
+      onCopyWhatsApp,
+      showToast
+    }) {
+      const { receiptFormat, name, phone, address, gstin, fssai, orderType, tableNo, serverName, customer, paymentMode, billNo, date, time, items, discountType, discountVal, gstRate, serviceChargeType, serviceChargeVal, packagingCharge, tip, footerNote } = restState;
+      const { foodSubtotal, totalItemUnits, discountAmount, discountLabel, serviceChargeAmount, serviceChargeLabel, packagingAmount, taxableValue, halfGstRate, cgstAmount, sgstAmount, tipAmount, grandTotal } = calculation;
+
+      const handleUpdateItem = (id, field, value) => {
+        setRestState(prev => ({
+          ...prev,
+          items: prev.items.map(item => {
+            if (item.id !== id) return item;
+            if (field === 'name') return { ...item, name: value };
+            if (field === 'qty') return { ...item, qty: Math.max(1, parseInt(value, 10) || 1) };
+            if (field === 'price') return { ...item, price: Math.max(0, parseFloat(value) || 0) };
+            return item;
+          })
+        }));
+      };
+
+      const handleAddItem = () => {
+        setRestState(prev => ({
+          ...prev,
+          items: [...prev.items, { id: Date.now(), name: 'New Food Item', qty: 1, price: 150 }]
+        }));
+      };
+
+      const handleAddPreset = (dishName, price) => {
+        setRestState(prev => ({
+          ...prev,
+          items: [...prev.items, { id: Date.now() + Math.random(), name: dishName, qty: 1, price }]
+        }));
+      };
+
+      const handleRemoveItem = (id) => {
+        if (items.length <= 1) {
+          showToast('At least one item is required in the food bill', true);
+          return;
+        }
+        setRestState(prev => ({
+          ...prev,
+          items: prev.items.filter(item => item.id !== id)
+        }));
+      };
+
+      let displayDate = date;
+      if (date && date.includes('-')) {
+        const [y, m, d] = date.split('-');
+        if (y && m && d) displayDate = `${d}/${m}/${y}`;
+      }
+
+      let displayTime = time || '';
+      if (time && time.includes(':')) {
+        const [hrs, mins] = displayTime.split(':');
+        const h = parseInt(hrs, 10);
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const formattedH = h % 12 || 12;
+        displayTime = `${String(formattedH).padStart(2, '0')}:${mins} ${ampm}`;
+      }
+
+      return (
+        <div className="tab-pane active">
+          <div className="restaurant-grid">
+            <div className="rest-left-column">
+              <section className="card">
+                <h2 className="card-title"><i className="fa-solid fa-store"></i> Restaurant Details</h2>
+                <div className="form-row-grid form-row-grid-3">
+                  <div className="form-group">
+                    <label>Restaurant Name</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-utensils input-lead-icon"></i>
+                      <input type="text" value={name} onChange={(e) => setRestState(prev => ({ ...prev, name: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Phone / Mobile No.</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-phone input-lead-icon"></i>
+                      <input type="text" value={phone} onChange={(e) => setRestState(prev => ({ ...prev, phone: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>GSTIN (GST Number)</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-id-card input-lead-icon"></i>
+                      <input type="text" value={gstin} style={{ textTransform: 'uppercase' }} onChange={(e) => setRestState(prev => ({ ...prev, gstin: e.target.value.toUpperCase() }))} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-row-grid">
+                  <div className="form-group">
+                    <label>FSSAI Lic. No. (Optional)</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-certificate input-lead-icon"></i>
+                      <input type="text" value={fssai} onChange={(e) => setRestState(prev => ({ ...prev, fssai: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Restaurant Address</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-location-dot input-lead-icon"></i>
+                      <input type="text" value={address} onChange={(e) => setRestState(prev => ({ ...prev, address: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-row-grid form-row-grid-4">
+                  <div className="form-group">
+                    <label>Order Type</label>
+                    <select className="std-select" value={orderType} onChange={(e) => setRestState(prev => ({ ...prev, orderType: e.target.value }))}>
+                      <option value="Dine-In">Dine-In</option>
+                      <option value="Takeaway / Parcel">Takeaway / Parcel</option>
+                      <option value="Home Delivery">Home Delivery</option>
+                      <option value="Online (Swiggy/Zomato)">Online (Swiggy/Zomato)</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Table / Order No.</label>
+                    <input type="text" className="std-input" value={tableNo} onChange={(e) => setRestState(prev => ({ ...prev, tableNo: e.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>Steward / Server</label>
+                    <input type="text" className="std-input" value={serverName} onChange={(e) => setRestState(prev => ({ ...prev, serverName: e.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>Customer Name</label>
+                    <input type="text" className="std-input" value={customer} onChange={(e) => setRestState(prev => ({ ...prev, customer: e.target.value }))} />
+                  </div>
+                </div>
+
+                <div className="form-row-grid form-row-grid-4">
+                  <div className="form-group">
+                    <label>Bill / Invoice No.</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-receipt input-lead-icon"></i>
+                      <input type="text" value={billNo} onChange={(e) => setRestState(prev => ({ ...prev, billNo: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Payment Method</label>
+                    <select className="std-select" value={paymentMode} onChange={(e) => setRestState(prev => ({ ...prev, paymentMode: e.target.value }))}>
+                      <option value="UPI / QR (GPay/PhonePe)">UPI / QR (GPay/PhonePe)</option>
+                      <option value="Cash">Cash</option>
+                      <option value="Card (Debit/Credit)">Card (Debit/Credit)</option>
+                      <option value="Net Banking">Net Banking</option>
+                      <option value="Due / Pending">Due / Pending</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Invoice Date</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-calendar-day input-lead-icon"></i>
+                      <input type="date" value={date} onChange={(e) => setRestState(prev => ({ ...prev, date: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Invoice Time</label>
+                    <div className="input-with-icon">
+                      <i className="fa-solid fa-clock input-lead-icon"></i>
+                      <input type="time" value={time} onChange={(e) => setRestState(prev => ({ ...prev, time: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="card food-items-card">
+                <div className="food-items-header">
+                  <div>
+                    <h2 className="card-title" style={{ marginBottom: 2 }}><i className="fa-solid fa-bowl-food"></i> Food Menu Items</h2>
+                    <p className="subtitle" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Add dishes, beverages, quantities and prices</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" className="btn-outline-sm" onClick={() => { setRestState(prev => ({ ...prev, items: [{ id: Date.now(), name: '', qty: 1, price: 0 }] })); showToast('Food items cleared!'); }}>
+                      <i className="fa-solid fa-trash"></i> Clear Items
+                    </button>
+                    <button type="button" className="btn-outline-sm btn-highlight" onClick={handleAddItem}>
+                      <i className="fa-solid fa-plus"></i> Add Item
+                    </button>
+                  </div>
+                </div>
+
+                <div className="food-items-table-wrapper">
+                  <table className="food-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '42%' }}>Food Item Name</th>
+                        <th style={{ width: '18%' }}>Qty</th>
+                        <th style={{ width: '25%' }}>Price (₹)</th>
+                        <th style={{ width: '15%' }}>Total</th>
+                        <th style={{ width: 40 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map(item => (
+                        <tr key={item.id}>
+                          <td>
+                            <input type="text" className="food-input-name" value={item.name} placeholder="Item name" onChange={(e) => handleUpdateItem(item.id, 'name', e.target.value)} />
+                          </td>
+                          <td>
+                            <input type="number" className="food-input-qty" value={item.qty} min="1" onChange={(e) => handleUpdateItem(item.id, 'qty', e.target.value)} />
+                          </td>
+                          <td>
+                            <input type="number" className="food-input-price" value={item.price} min="0" onChange={(e) => handleUpdateItem(item.id, 'price', e.target.value)} />
+                          </td>
+                          <td><span className="food-row-total">{formatINR(item.qty * item.price)}</span></td>
+                          <td>
+                            <button type="button" className="btn-remove-food" onClick={() => handleRemoveItem(item.id)}>
+                              <i className="fa-solid fa-trash-can"></i>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="quick-food-presets">
+                  <span className="quick-label">Popular Dishes:</span>
+                  {[
+                    { name: 'Paneer Butter Masala', price: 280 },
+                    { name: 'Butter Naan', price: 45 },
+                    { name: 'Veg Biryani', price: 240 },
+                    { name: 'Chicken Tikka', price: 320 },
+                    { name: 'Cold Beverage', price: 60 }
+                  ].map(dish => (
+                    <button key={dish.name} type="button" className="food-preset-chip" onClick={() => handleAddPreset(dish.name, dish.price)}>
+                      + {dish.name} (₹{dish.price})
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="card">
+                <h2 className="card-title"><i className="fa-solid fa-percent"></i> Taxes, Discount & Extra Charges</h2>
+                <div className="rest-config-grid">
+                  <div className="rest-config-box">
+                    <div className="config-title-row">
+                      <label><i className="fa-solid fa-tag"></i> Food Discount</label>
+                      <div className="segmented-control mini-toggle">
+                        <button type="button" className={`segment-btn ${discountType === 'percent' ? 'active' : ''}`} onClick={() => setRestState(prev => ({ ...prev, discountType: 'percent' }))}>%</button>
+                        <button type="button" className={`segment-btn ${discountType === 'amount' ? 'active' : ''}`} onClick={() => setRestState(prev => ({ ...prev, discountType: 'amount' }))}>₹</button>
+                      </div>
+                    </div>
+                    <div className="input-with-symbol">
+                      <span className="currency-symbol">{discountType === 'percent' ? '%' : '₹'}</span>
+                      <input type="number" min="0" value={discountVal === 0 ? '' : discountVal} onChange={(e) => setRestState(prev => ({ ...prev, discountVal: Math.max(0, parseFloat(e.target.value) || 0) }))} />
+                    </div>
+                  </div>
+
+                  <div className="rest-config-box">
+                    <div className="config-title-row">
+                      <label><i className="fa-solid fa-landmark"></i> Restaurant GST</label>
+                      <span className="sub-pill">{gstRate}% (Restaurant)</span>
+                    </div>
+                    <div className="rest-gst-options">
+                      {[
+                        { rate: 5, label: '5% (Standard)' },
+                        { rate: 12, label: '12% (AC Hotel)' },
+                        { rate: 18, label: '18% (Luxury)' },
+                        { rate: 0, label: '0% (Nil)' }
+                      ].map(slab => (
+                        <button key={slab.rate} type="button" className={`rest-gst-btn ${gstRate === slab.rate ? 'active' : ''}`} onClick={() => setRestState(prev => ({ ...prev, gstRate: slab.rate }))}>
+                          {slab.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rest-config-box">
+                    <div className="config-title-row">
+                      <label><i className="fa-solid fa-bell-concierge"></i> Service Charge</label>
+                      <div className="segmented-control mini-toggle">
+                        <button type="button" className={`segment-btn ${serviceChargeType === 'percent' ? 'active' : ''}`} onClick={() => setRestState(prev => ({ ...prev, serviceChargeType: 'percent' }))}>%</button>
+                        <button type="button" className={`segment-btn ${serviceChargeType === 'amount' ? 'active' : ''}`} onClick={() => setRestState(prev => ({ ...prev, serviceChargeType: 'amount' }))}>₹</button>
+                      </div>
+                    </div>
+                    <div className="input-with-symbol">
+                      <span className="currency-symbol">{serviceChargeType === 'percent' ? '%' : '₹'}</span>
+                      <input type="number" min="0" value={serviceChargeVal === 0 ? '' : serviceChargeVal} onChange={(e) => setRestState(prev => ({ ...prev, serviceChargeVal: Math.max(0, parseFloat(e.target.value) || 0) }))} />
+                    </div>
+                    <div className="quick-chips" style={{ marginTop: 6 }}>
+                      <button type="button" className="chip-btn" onClick={() => setRestState(prev => ({ ...prev, serviceChargeVal: 0 }))}>0% (None)</button>
+                      <button type="button" className="chip-btn" onClick={() => setRestState(prev => ({ ...prev, serviceChargeVal: 5 }))}>5%</button>
+                      <button type="button" className="chip-btn" onClick={() => setRestState(prev => ({ ...prev, serviceChargeVal: 10 }))}>10%</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rest-config-grid" style={{ marginTop: 14 }}>
+                  <div className="rest-config-box">
+                    <label style={{ display: 'block', marginBottom: 6 }}><i className="fa-solid fa-box-open"></i> Packaging / Delivery (₹)</label>
+                    <div className="input-with-symbol">
+                      <span className="currency-symbol">₹</span>
+                      <input type="number" min="0" value={packagingCharge === 0 ? '' : packagingCharge} onChange={(e) => setRestState(prev => ({ ...prev, packagingCharge: Math.max(0, parseFloat(e.target.value) || 0) }))} />
+                    </div>
+                  </div>
+
+                  <div className="rest-config-box">
+                    <label style={{ display: 'block', marginBottom: 6 }}><i className="fa-solid fa-hand-holding-dollar"></i> Tip / Gratuity (₹)</label>
+                    <div className="input-with-symbol">
+                      <span className="currency-symbol">₹</span>
+                      <input type="number" min="0" value={tip === 0 ? '' : tip} onChange={(e) => setRestState(prev => ({ ...prev, tip: Math.max(0, parseFloat(e.target.value) || 0) }))} />
+                    </div>
+                  </div>
+
+                  <div className="rest-config-box">
+                    <label style={{ display: 'block', marginBottom: 6 }}><i className="fa-solid fa-message"></i> Custom Footer Message</label>
+                    <input type="text" className="std-input" value={footerNote} onChange={(e) => setRestState(prev => ({ ...prev, footerNote: e.target.value }))} />
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div className="rest-right-column">
+              <div className="format-selector-card">
+                <label className="format-header-label"><i className="fa-solid fa-file-invoice"></i> Choose Receipt / Print Format:</label>
+                <div className="format-pill-group">
+                  {[
+                    { id: 'thermal80', icon: 'fa-receipt', label: 'Thermal (80mm)' },
+                    { id: 'formalA4', icon: 'fa-file-lines', label: 'A4 Tax Invoice' },
+                    { id: 'kot', icon: 'fa-fire-burner', label: 'Kitchen (KOT)' },
+                    { id: 'mini58', icon: 'fa-ticket', label: 'Mini Slip (58mm)' }
+                  ].map(f => (
+                    <button key={f.id} type="button" className={`format-btn ${receiptFormat === f.id ? 'active' : ''}`} onClick={() => { setRestState(prev => ({ ...prev, receiptFormat: f.id })); showToast(`Format: ${f.label}`); }}>
+                      <i className={`fa-solid ${f.icon}`}></i>
+                      <span>{f.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="card pos-receipt-card">
+                <div className="receipt-cutout-top"></div>
+                <div className="receipt-header-center">
+                  <h3>{name || 'Restaurant Name'}</h3>
+                  <p className="receipt-address">{address}</p>
+                  {phone && <p className="receipt-phone">Ph: {phone}</p>}
+                  <p className="receipt-gst">GSTIN: <strong>{gstin || 'N/A'}</strong></p>
+                  {fssai && <p className="receipt-fssai">FSSAI Lic No: {fssai}</p>}
+                  <div className="receipt-dashed-line"></div>
+
+                  <div className="receipt-meta-grid">
+                    <div>Date: <strong>{displayDate}</strong></div>
+                    <div>Time: <strong>{displayTime}</strong></div>
+                    <div>Bill No: <strong>{billNo.startsWith('#') ? billNo : `#${billNo}`}</strong></div>
+                    <div>Type: <strong>{orderType}</strong></div>
+                    <div>Table: <strong>{tableNo}</strong></div>
+                    <div>Server: <strong>{serverName}</strong></div>
+                    <div>Customer: <strong>{customer}</strong></div>
+                    <div>Pay Mode: <strong>{paymentMode}</strong></div>
+                  </div>
+                  <div className="receipt-dashed-line"></div>
+                </div>
+
+                <div className="receipt-items-table">
+                  <div className="receipt-item-header">
+                    <span className="item-col-name">ITEM</span>
+                    <span className="item-col-qty">QTY</span>
+                    <span className="item-col-rate">RATE</span>
+                    <span className="item-col-amt">AMT (₹)</span>
+                  </div>
+                  <div>
+                    {items.map(item => (
+                      <div key={item.id} className="receipt-item-line">
+                        <span className="item-col-name">{item.name || 'Item'}</span>
+                        <span className="item-col-qty">{item.qty}</span>
+                        <span className="item-col-rate">{item.price.toFixed(2)}</span>
+                        <span className="item-col-amt">{(item.qty * item.price).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="receipt-dashed-line"></div>
+
+                <div className="receipt-summary-table">
+                  <div className="receipt-row">
+                    <span>Food Subtotal ({totalItemUnits} items):</span>
+                    <strong>{formatINR(foodSubtotal)}</strong>
+                  </div>
+                  {discountAmount > 0 && (
+                    <div className="receipt-row text-discount">
+                      <span>Discount ({discountLabel}):</span>
+                      <strong>- {formatINR(discountAmount)}</strong>
+                    </div>
+                  )}
+                  {serviceChargeAmount > 0 && (
+                    <div className="receipt-row">
+                      <span>Service Charge ({serviceChargeLabel}):</span>
+                      <strong>+ {formatINR(serviceChargeAmount)}</strong>
+                    </div>
+                  )}
+                  {packagingAmount > 0 && (
+                    <div className="receipt-row">
+                      <span>Packaging / Parcel Fee:</span>
+                      <strong>+ {formatINR(packagingAmount)}</strong>
+                    </div>
+                  )}
+                  <div className="receipt-row text-taxable">
+                    <span>Taxable Amount:</span>
+                    <strong>{formatINR(taxableValue)}</strong>
+                  </div>
+                  <div className="receipt-row text-tax">
+                    <span>CGST ({halfGstRate}%):</span>
+                    <strong>+ {formatINR(cgstAmount)}</strong>
+                  </div>
+                  <div className="receipt-row text-tax">
+                    <span>SGST ({halfGstRate}%):</span>
+                    <strong>+ {formatINR(sgstAmount)}</strong>
+                  </div>
+                  {tipAmount > 0 && (
+                    <div className="receipt-row">
+                      <span>Tip / Gratuity:</span>
+                      <strong>+ {formatINR(tipAmount)}</strong>
+                    </div>
+                  )}
+                  <div className="receipt-double-line"></div>
+                  <div className="receipt-grand-total-row">
+                    <div className="grand-label">GRAND TOTAL</div>
+                    <div className="grand-amt">{formatINR(grandTotal)}</div>
+                  </div>
+                  <div className="receipt-in-words">{inrToWords(grandTotal)}</div>
+                </div>
+
+                <div className="receipt-footer-center">
+                  <p>{footerNote || 'Thank You! Visit Again!'}</p>
+                </div>
+                <div className="receipt-cutout-bottom"></div>
+              </div>
+
+              <div className="action-buttons-group" style={{ marginTop: 16 }}>
+                <button type="button" className="btn-action btn-primary" onClick={onPrint}>
+                  <i className="fa-solid fa-print"></i> Print Receipt
+                </button>
+                <button type="button" className="btn-action btn-secondary" onClick={onCopyWhatsApp}>
+                  <i className="fa-solid fa-share-nodes"></i> Share WhatsApp Bill
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [theme, setTheme] = useState(() => localStorage.getItem('app_theme') || 'dark');
+      const [activeTab, setActiveTab] = useState('tab-gst-calc');
+
+      const [generalState, setGeneralState] = useState({
+        baseAmount: 10000,
+        quantity: 1,
+        discountType: 'percent',
+        discountValue: 10,
+        gstRate: 18,
+        isCustomGst: false,
+        taxMode: 'exclusive',
+        supplyType: 'intra'
+      });
+
+      const [restState, setRestState] = useState({
+        receiptFormat: 'thermal80',
+        name: 'The Royal Dine Restaurant',
+        phone: '+91 9876543210',
+        address: '102, MG Road, Connaught Place, New Delhi - 110001',
+        gstin: '27AABCU9603R1ZM',
+        fssai: '10019011000123',
+        orderType: 'Dine-In',
+        tableNo: 'Table T-4',
+        serverName: 'Rahul (Steward)',
+        customer: 'Guest',
+        paymentMode: 'UPI / QR (GPay/PhonePe)',
+        billNo: 'INV-' + Math.floor(1000 + Math.random() * 9000),
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toTimeString().split(' ')[0].substring(0, 5),
+        items: [
+          { id: 1, name: 'Paneer Butter Masala', qty: 2, price: 280 },
+          { id: 2, name: 'Butter Naan', qty: 4, price: 45 },
+          { id: 3, name: 'Veg Dum Biryani', qty: 1, price: 240 },
+          { id: 4, name: 'Fresh Lime Soda', qty: 2, price: 60 }
+        ],
+        discountType: 'percent',
+        discountVal: 5,
+        gstRate: 5,
+        serviceChargeType: 'percent',
+        serviceChargeVal: 5,
+        packagingCharge: 0,
+        tip: 0,
+        footerNote: 'Thank You! Visit Again!'
+      });
+
+      const [history, setHistory] = useState(() => {
+        try {
+          return JSON.parse(localStorage.getItem('gst_calc_history') || '[]');
+        } catch {
+          return [];
+        }
+      });
+
+      const [toast, setToast] = useState({ visible: false, message: '', isError: false });
+
+      useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('app_theme', theme);
+      }, [theme]);
+
+      useEffect(() => {
+        localStorage.setItem('gst_calc_history', JSON.stringify(history));
+      }, [history]);
+
+      const showToast = (message, isError = false) => {
+        setToast({ visible: true, message, isError });
+        setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+      };
+
+      const generalCalc = useMemo(() => calculateGeneralGST(generalState), [generalState]);
+      const restCalc = useMemo(() => calculateRestaurantBill(restState), [restState]);
+
+      const handleSaveHistory = () => {
+        const record = {
+          id: Date.now(),
+          date: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+          baseAmount: generalState.baseAmount,
+          qty: generalCalc.qty,
+          discount: generalCalc.discountLabel,
+          discountVal: generalCalc.discountAmount,
+          gstRate: generalCalc.gstRate,
+          taxMode: generalState.taxMode,
+          grandTotal: generalCalc.grandTotal
+        };
+        setHistory(prev => [record, ...prev.slice(0, 19)]);
+        showToast('Calculation saved to history!');
+      };
+
+      const handleLoadHistory = (item) => {
+        setGeneralState(prev => ({
+          ...prev,
+          baseAmount: item.baseAmount,
+          quantity: item.qty || 1,
+          gstRate: item.gstRate,
+          taxMode: item.taxMode || 'exclusive',
+          isCustomGst: ![0, 5, 12, 18, 28].includes(item.gstRate)
+        }));
+        showToast('Loaded calculation from history!');
+      };
+
+      const handleCopyGeneralSummary = () => {
+        const dateStr = new Date().toLocaleDateString('en-IN');
+        const taxDetails = generalState.supplyType === 'intra'
+          ? `• CGST (${generalCalc.gstRate/2}%): ${formatINR(generalCalc.totalGstAmount/2)}\n• SGST (${generalCalc.gstRate/2}%): ${formatINR(generalCalc.totalGstAmount/2)}`
+          : `• IGST (${generalCalc.gstRate}%): ${formatINR(generalCalc.totalGstAmount)}`;
+
+        const text = `🧾 *ESTIMATED TAX INVOICE SUMMARY*\nDate: ${dateStr}\n----------------------------------------\nBase Amount: ${formatINR(generalState.baseAmount)} × ${generalCalc.qty} qty\nGross Subtotal: ${formatINR(generalCalc.grossSubtotal)}\nDiscount (${generalCalc.discountLabel}): - ${formatINR(generalCalc.discountAmount)}\n----------------------------------------\nNet Taxable Value: ${formatINR(generalCalc.taxableValue)}\nGST Rate: ${generalCalc.gstRate}%\n${taxDetails}\nTotal GST: + ${formatINR(generalCalc.totalGstAmount)}\n----------------------------------------\n*FINAL GRAND TOTAL: ${formatINR(generalCalc.grandTotal)}*\n(${inrToWords(generalCalc.grandTotal)})\n----------------------------------------`;
+        navigator.clipboard.writeText(text).then(() => showToast('Summary copied for WhatsApp!')).catch(() => showToast('Failed to copy', true));
+      };
+
+      const handleCopyRestaurantWhatsApp = () => {
+        let displayDate = restState.date;
+        if (restState.date && restState.date.includes('-')) {
+          const [y, m, d] = restState.date.split('-');
+          if (y && m && d) displayDate = `${d}/${m}/${y}`;
+        }
+        const itemLines = restState.items.map(i => `• ${i.name || 'Item'} (x${i.qty}) = ₹${(i.qty * i.price).toFixed(2)}`).join('\n');
+        const text = `🍽️ *${restState.name.toUpperCase()}*\n${restState.address}\nGSTIN: ${restState.gstin}\n----------------------------------------\n🧾 *BILL ${restState.billNo}*\nDate: ${displayDate} ${restState.time || ''} | Table: ${restState.tableNo}\n----------------------------------------\n${itemLines}\n----------------------------------------\nSubtotal: ${formatINR(restCalc.foodSubtotal)}\nDiscount (${restCalc.discountLabel}): - ${formatINR(restCalc.discountAmount)}\nService Charge: + ${formatINR(restCalc.serviceChargeAmount)}\nCGST (${restCalc.halfGstRate}%): + ${formatINR(restCalc.cgstAmount)}\nSGST (${restCalc.halfGstRate}%): + ${formatINR(restCalc.sgstAmount)}\n----------------------------------------\n*GRAND TOTAL: ${formatINR(restCalc.grandTotal)}*\n(${inrToWords(restCalc.grandTotal)})\n----------------------------------------\n${restState.footerNote}`;
+        navigator.clipboard.writeText(text).then(() => showToast('Restaurant bill copied for WhatsApp!')).catch(() => showToast('Failed to copy', true));
+      };
+
+      return (
+        <div className="react-app-wrapper">
+          <div className="background-decorations">
+            <div className="glow-sphere sphere-1"></div>
+            <div className="glow-sphere sphere-2"></div>
+            <div className="glow-sphere sphere-3"></div>
+          </div>
+
+          <div className="app-container">
+            <Header
+              theme={theme}
+              onToggleTheme={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
+              onResetAll={() => {
+                setGeneralState({ baseAmount: 10000, quantity: 1, discountType: 'percent', discountValue: 10, gstRate: 18, isCustomGst: false, taxMode: 'exclusive', supplyType: 'intra' });
+                showToast('Reset to defaults!');
+              }}
+            />
+
+            <nav className="main-tabs-nav">
+              <button type="button" className={`main-tab-btn ${activeTab === 'tab-gst-calc' ? 'active' : ''}`} onClick={() => setActiveTab('tab-gst-calc')}>
+                <i className="fa-solid fa-calculator"></i>
+                <span>General GST & Discount</span>
+              </button>
+              <button type="button" className={`main-tab-btn ${activeTab === 'tab-restaurant-bill' ? 'active' : ''}`} onClick={() => setActiveTab('tab-restaurant-bill')}>
+                <i className="fa-solid fa-utensils"></i>
+                <span>Restaurant Food Bill & Invoice</span>
+                <span className="tab-badge">New</span>
+              </button>
+            </nav>
+
+            {activeTab === 'tab-gst-calc' ? (
+              <GstCalculator
+                generalState={generalState}
+                setGeneralState={setGeneralState}
+                calculation={generalCalc}
+                history={history}
+                onSaveHistory={handleSaveHistory}
+                onLoadHistory={handleLoadHistory}
+                onClearHistory={() => { setHistory([]); showToast('History cleared'); }}
+                onCopySummary={handleCopyGeneralSummary}
+                onPrint={() => window.print()}
+              />
+            ) : (
+              <RestaurantBilling
+                restState={restState}
+                setRestState={setRestState}
+                calculation={restCalc}
+                onPrint={() => window.print()}
+                onCopyWhatsApp={handleCopyRestaurantWhatsApp}
+                showToast={showToast}
+              />
+            )}
+
+            <footer className="app-footer">
+              <p>GST & Discount Calculator & Restaurant Food Invoicing for Indian Businesses • Formatted in Indian Rupee (₹ INR) • React + Tailwind CSS Edition</p>
+            </footer>
+          </div>
+
+          <div id="toastMessage" className={`toast ${toast.visible ? 'show' : ''}`} style={{ background: toast.isError ? '#f43f5e' : '#10b981' }}>
+            <i className={`fa-solid ${toast.isError ? 'fa-triangle-exclamation' : 'fa-check-circle'}`}></i>{' '}
+            <span>{toast.message}</span>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
